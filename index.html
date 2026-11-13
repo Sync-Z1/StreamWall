@@ -1,0 +1,1251 @@
+<!DOCTYPE html>
+<html lang="zh-Hant" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>實況牆｜一個分頁看多台 Twitch</title>
+<meta name="description" content="在一個分頁同時看多台 Twitch 實況：自由排版、單台收聽、聊天室、群組與深淺色主題。">
+<meta name="color-scheme" content="dark light">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231A212B'/%3E%3Crect x='6' y='6' width='9' height='9' rx='2' fill='%23FF4A3D'/%3E%3Crect x='17' y='6' width='9' height='9' rx='2' fill='%237EC3FF'/%3E%3Crect x='6' y='17' width='9' height='9' rx='2' fill='%237EC3FF'/%3E%3Crect x='17' y='17' width='9' height='9' rx='2' fill='%237EC3FF'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600&display=swap" rel="stylesheet">
+<script>
+(function () {
+  try {
+    var s = JSON.parse(localStorage.getItem('streamwall.v1') || '{}');
+    var t = (s.settings && s.settings.theme) || 'system';
+    if (t !== 'dark' && t !== 'light') t = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+    document.documentElement.dataset.theme = t;
+  } catch (e) {}
+})();
+</script>
+<style>
+/* ── 設計代碼：控制室的多畫面監看牆 ─────────────────────────── */
+:root {
+  --font: "Barlow Semi Condensed", "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", system-ui, sans-serif;
+  --umd-h: 30px;
+  --gap: 6px;
+  --chat-w: 340px;
+}
+html[data-theme="dark"] {
+  --wall: #05070A;
+  --console: #1A212B;
+  --raised: #242E3B;
+  --sunken: #111820;
+  --line: #33404F;
+  --text: #E9EEF4;
+  --muted: #93A2B5;
+  --tally: #FF4A3D;
+  --cue: #FFB020;
+  --key: #7EC3FF;
+  --key-ink: #06223A;
+  --shadow: 0 14px 36px rgb(0 0 0 / .5);
+}
+html[data-theme="light"] {
+  --wall: #C6CDD7;
+  --console: #EEF1F5;
+  --raised: #FFFFFF;
+  --sunken: #E0E5EB;
+  --line: #BBC5D1;
+  --text: #17202B;
+  --muted: #566476;
+  --tally: #D62F22;
+  --cue: #9A5200;
+  --key: #0A66C2;
+  --key-ink: #FFFFFF;
+  --shadow: 0 14px 36px rgb(23 32 43 / .22);
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  overflow: hidden;
+  font: 500 14px/1.5 var(--font);
+  color: var(--text);
+  background: var(--wall);
+  -webkit-font-smoothing: antialiased;
+}
+button, input, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+a { color: var(--key); }
+:focus-visible { outline: 2px solid var(--key); outline-offset: 2px; }
+.ic { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.skip { position: absolute; left: -999px; top: 0; z-index: 100; padding: 8px 12px; background: var(--key); color: var(--key-ink); }
+.skip:focus { left: 8px; top: 8px; }
+
+/* ── 工具列 ─────────────────────────────────────────────────── */
+.bar {
+  flex: none;
+  position: relative;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 10px;
+  background: var(--console);
+  border-bottom: 1px solid var(--line);
+}
+body.is-barless .bar { display: none; }
+.brand { display: flex; align-items: center; gap: 8px; margin-right: 6px; font-size: 17px; font-weight: 600; white-space: nowrap; }
+.brand svg { width: 22px; height: 22px; }
+.add { display: flex; flex: 1 1 190px; min-width: 150px; max-width: 430px; }
+.add input {
+  flex: 1; min-width: 0; height: 34px; padding: 0 10px;
+  background: var(--sunken); border: 1px solid var(--line); border-right: 0; border-radius: 6px 0 0 6px;
+}
+.add input::placeholder { color: var(--muted); }
+.add button {
+  display: flex; align-items: center; gap: 4px; height: 34px; padding: 0 12px;
+  background: var(--key); color: var(--key-ink); border: 1px solid var(--key); border-radius: 0 6px 6px 0; font-weight: 600;
+}
+.bar__spacer { flex: 1 1 0; }
+.btn {
+  position: relative;
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 34px; padding: 0 10px;
+  background: transparent; border: 1px solid transparent; border-radius: 6px;
+  white-space: nowrap; text-decoration: none; color: var(--text);
+}
+.btn:hover { background: var(--raised); border-color: var(--line); }
+.btn[aria-pressed="true"], .btn[aria-expanded="true"] { background: var(--raised); border-color: var(--line); }
+/* 亮起的按鍵：底部一道燈條，像導播機上被按下的鍵 */
+.btn[aria-pressed="true"]::after, .btn[aria-expanded="true"]::after {
+  content: ""; position: absolute; left: 8px; right: 8px; bottom: 3px; height: 2px; border-radius: 2px; background: var(--key);
+}
+.btn--solid { background: var(--key); color: var(--key-ink); border-color: var(--key); font-weight: 600; }
+.btn--solid:hover { background: var(--key); border-color: var(--key); filter: brightness(1.08); }
+.btn--line { border-color: var(--line); }
+.btn--danger:hover { border-color: var(--tally); color: var(--tally); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.seg { display: inline-flex; padding: 2px; background: var(--sunken); border: 1px solid var(--line); border-radius: 8px; }
+.seg .btn { height: 28px; padding: 0 9px; border-radius: 6px; }
+.seg .btn[aria-pressed="true"]::after { display: none; }
+.seg .btn[aria-pressed="true"] { background: var(--key); color: var(--key-ink); border-color: var(--key); }
+.vol { display: inline-flex; align-items: center; gap: 2px; }
+.vol input[type="range"] { width: 84px; accent-color: var(--key); }
+@media (max-width: 1180px) { .bar .btn .lbl { display: none; } }
+@media (max-width: 820px) { .vol input[type="range"] { display: none; } }
+.barpill {
+  position: fixed; z-index: 35; top: 6px; left: 50%; transform: translateX(-50%);
+  display: none; align-items: center; gap: 6px; height: 28px; padding: 0 12px;
+  background: var(--console); color: var(--text); border: 1px solid var(--line); border-radius: 14px; opacity: .35;
+}
+body.is-barless .barpill { display: inline-flex; }
+.barpill:hover, .barpill:focus-visible { opacity: 1; }
+
+/* ── 舞台：牆 + 聊天室 ─────────────────────────────────────── */
+.stage { flex: 1 1 0; min-height: 0; display: flex; }
+.wall { position: relative; flex: 1 1 0; min-width: 0; overflow: hidden; background: var(--wall); }
+.notice {
+  position: absolute; z-index: 5; left: 50%; top: 10px; transform: translateX(-50%);
+  display: flex; align-items: flex-start; gap: 10px; width: min(640px, calc(100% - 20px)); padding: 10px 12px;
+  background: var(--raised); border: 1px solid var(--cue); border-radius: 8px; box-shadow: var(--shadow);
+}
+.notice p { margin: 0; flex: 1; }
+
+.tile {
+  position: absolute;
+  display: flex; flex-direction: column;
+  container-type: inline-size;
+  background: #000; border-radius: 5px; overflow: hidden;
+  box-shadow: 0 0 0 1px var(--line);
+  transition: left .2s ease, top .2s ease, width .2s ease, height .2s ease, box-shadow .15s ease;
+}
+.tile.is-onair { box-shadow: 0 0 0 2px var(--tally); }
+.tile.is-dragged { z-index: 10; opacity: .88; transition: none; box-shadow: 0 0 0 2px var(--key), var(--shadow); }
+.tile.is-droptarget { box-shadow: 0 0 0 2px var(--key); }
+.tile__screen { position: relative; flex: 1 1 0; min-height: 0; background: #000; }
+.tile__player, .tile__slot { position: absolute; inset: 0; }
+.tile__player iframe { display: block; width: 100%; height: 100%; border: 0; }
+.wall.is-dragging iframe, body.is-resizing iframe { pointer-events: none; }
+/* 沒有訊號時的彩條 */
+.tile__bars { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; filter: saturate(.75) brightness(.8);
+  background: linear-gradient(90deg, #c0c0c0 0 14.28%, #c0c000 0 28.57%, #00c0c0 0 42.85%, #00c000 0 57.14%, #c000c0 0 71.42%, #c00000 0 85.71%, #0000c0 0); }
+.tile.is-demo .tile__bars { display: flex; }
+.tile.is-demo .tile__player { display: none; }
+.tile__barslabel { padding: 3px 10px; background: #000; color: #fff; border-radius: 3px; font-size: 13px; }
+
+/* 畫面下方的名牌（UMD） */
+.tile__umd {
+  flex: none; height: var(--umd-h);
+  display: flex; align-items: center; gap: 6px; padding: 0 3px 0 0;
+  background: var(--console); color: var(--text);
+  cursor: grab; user-select: none; -webkit-user-select: none; touch-action: none;
+}
+.tile.is-onair .tile__umd { background: color-mix(in srgb, var(--tally) 20%, var(--console)); }
+.tile__grip { display: grid; place-items: center; width: 22px; height: 100%; padding: 0; background: none; border: 0; color: var(--muted); cursor: grab; }
+.tile__grip .ic { width: 14px; height: 14px; fill: currentColor; stroke: none; }
+.tile__key { min-width: 16px; padding: 0 4px; border: 1px solid var(--line); border-radius: 3px; color: var(--muted); font-size: 11px; line-height: 15px; text-align: center; }
+.tile__key:empty { display: none; }
+.lamp { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--line); }
+.tile.is-onair .lamp { background: var(--tally); box-shadow: 0 0 8px var(--tally); }
+.tile__name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 600; letter-spacing: .01em; }
+.tile__state { flex: none; color: var(--cue); font-size: 12px; white-space: nowrap; }
+.tile__state:empty { display: none; }
+.tile__id { flex: 1 1 0; min-width: 0; display: flex; align-items: center; gap: 6px; }
+.tile__actions { display: flex; flex: none; opacity: 0; transition: opacity .12s; }
+.tile:hover .tile__actions, .tile:focus-within .tile__actions { opacity: 1; }
+@media (hover: none) { .tile__actions { opacity: 1; } }
+.tbtn { display: grid; place-items: center; flex: none; width: 26px; height: 26px; padding: 0; background: none; border: 0; border-radius: 4px; color: var(--muted); }
+.tbtn:hover { background: var(--raised); color: var(--text); }
+.tbtn .ic { width: 16px; height: 16px; }
+.tbtn--audio { color: var(--text); }
+.tbtn--audio[aria-pressed="true"] { color: var(--tally); }
+.tbtn--audio:disabled { opacity: .4; cursor: not-allowed; }
+@container (max-width: 270px) { .tbtn--opt, .tile__key { display: none; } }
+@container (max-width: 190px) { .tile__actions { display: none; } }
+
+/* 空牆 */
+.empty { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; overflow: auto; }
+/* 空牆上淡淡的四分割線，預告畫面會怎麼排 */
+.empty::before { content: ""; position: absolute; inset: 6px; border: 1px solid var(--line); border-radius: 5px; opacity: .55; pointer-events: none;
+  background: linear-gradient(var(--line), var(--line)) 50% 0 / 1px 100% no-repeat, linear-gradient(var(--line), var(--line)) 0 50% / 100% 1px no-repeat; }
+.empty__in { position: relative; width: min(600px, 100%); padding: 28px 30px; background: var(--wall); }
+.empty h1 { margin: 0 0 10px; font-size: clamp(26px, 4.2vw, 40px); line-height: 1.2; font-weight: 600; letter-spacing: .01em; }
+.empty p { margin: 0 0 18px; color: var(--muted); font-size: 15px; max-width: 34em; }
+.empty .add { max-width: none; flex: none; }
+.empty .add input, .empty .add button { height: 46px; font-size: 16px; }
+.empty .add button { padding: 0 18px; }
+.empty__groups { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 16px; color: var(--muted); }
+.empty__tip { margin-top: 22px; color: var(--muted); font-size: 13px; }
+kbd { display: inline-block; min-width: 20px; padding: 0 5px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; background: var(--sunken); font: inherit; font-size: 12px; text-align: center; }
+
+/* 聊天室 */
+.divider { flex: none; width: 7px; background: var(--console); border-left: 1px solid var(--line); cursor: col-resize; touch-action: none; }
+.divider:hover, .divider:focus-visible, body.is-resizing .divider { background: var(--key); }
+.chat { flex: none; width: var(--chat-w); max-width: 50vw; min-width: 0; display: flex; flex-direction: column; background: var(--console); }
+.chat__head { flex: none; display: flex; align-items: center; gap: 4px; padding: 4px; border-bottom: 1px solid var(--line); }
+.chat__tabs { flex: 1; min-width: 0; display: flex; gap: 2px; overflow-x: auto; scrollbar-width: thin; }
+.chat__tab { flex: none; height: 28px; padding: 0 9px; background: none; border: 1px solid transparent; border-radius: 6px; color: var(--muted); font-weight: 600; white-space: nowrap; }
+.chat__tab:hover { color: var(--text); background: var(--raised); }
+.chat__tab[aria-selected="true"] { color: var(--text); background: var(--raised); border-color: var(--line); }
+.chat__body { position: relative; flex: 1 1 0; min-height: 0; }
+.chat__body iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+.chat__msg { padding: 18px 14px; color: var(--muted); }
+
+/* 彈出面板 */
+.backdrop { position: fixed; inset: 0; z-index: 40; }
+.pop {
+  position: fixed; z-index: 50; width: min(370px, calc(100vw - 16px)); max-height: calc(100dvh - 70px); overflow: auto;
+  padding: 14px; background: var(--raised); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow);
+}
+.pop h2 { margin: 0 0 8px; font-size: 17px; font-weight: 600; }
+.pop h3 { margin: 16px 0 6px; font-size: 14px; font-weight: 600; }
+.pop p { margin: 0 0 10px; color: var(--muted); }
+.pop p strong { color: var(--text); font-weight: 600; }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 0; border-top: 1px solid var(--line); }
+.row:first-of-type { border-top: 0; }
+.row small { display: block; color: var(--muted); font-size: 12px; }
+.field { height: 32px; padding: 0 8px; background: var(--sunken); border: 1px solid var(--line); border-radius: 6px; }
+input.field { min-width: 0; flex: 1; }
+.switch { position: relative; flex: none; width: 40px; height: 22px; padding: 0; background: var(--sunken); border: 1px solid var(--line); border-radius: 11px; }
+.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--muted); transition: transform .15s; }
+.switch[aria-checked="true"] { background: var(--key); border-color: var(--key); }
+.switch[aria-checked="true"]::after { transform: translateX(18px); background: var(--key-ink); }
+.inline { display: flex; gap: 6px; }
+.list { list-style: none; margin: 10px 0 0; padding: 0; }
+.list li { display: flex; align-items: center; gap: 6px; padding: 8px 0; border-top: 1px solid var(--line); }
+.list .grow { flex: 1; min-width: 0; }
+.list .grow b { display: block; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.list .grow small { display: block; color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.checks { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 12px; }
+.check { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px 3px 7px; border: 1px solid var(--line); border-radius: 14px; background: var(--sunken); font-weight: 600; cursor: pointer; }
+.check input { accent-color: var(--key); margin: 0; }
+.tabs2 { display: grid; gap: 8px; margin-top: 12px; }
+.tabs2 a.btn { height: auto; min-height: 40px; padding: 7px 12px; white-space: normal; justify-content: space-between; }
+.tabs2 small { display: block; font-weight: 500; opacity: .8; font-size: 12px; word-break: break-all; }
+.keys { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; margin: 0; align-items: center; }
+.keys dt { text-align: right; }
+.keys dd { margin: 0; }
+.pop__foot { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+
+.toasts { position: fixed; z-index: 60; left: 50%; bottom: 18px; transform: translateX(-50%); display: grid; gap: 6px; justify-items: center; pointer-events: none; }
+.toast { padding: 7px 14px; background: var(--raised); border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow); animation: rise .18s ease; }
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .tile, .switch::after, .tile__actions { transition: none; }
+  .toast { animation: none; }
+}
+</style>
+</head>
+<body>
+<a class="skip" href="#add-input">跳到新增頻道</a>
+
+<svg hidden aria-hidden="true">
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24"><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/></symbol>
+  <symbol id="i-focus" viewBox="0 0 24 24"><path d="M4 4h11v16H4zM17.5 4H20v4h-2.5zM17.5 10H20v4h-2.5zM17.5 16H20v4h-2.5z"/></symbol>
+  <symbol id="i-volume" viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9H4zM16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/></symbol>
+  <symbol id="i-mute" viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9H4zM17 9.5l5 5M22 9.5l-5 5"/></symbol>
+  <symbol id="i-chat" viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4V5z"/></symbol>
+  <symbol id="i-groups" viewBox="0 0 24 24"><path d="M6 4h12v16l-6-4-6 4V4z"/></symbol>
+  <symbol id="i-points" viewBox="0 0 24 24"><path d="M7 4h10l5 6-10 10L2 10l5-6zM2 10h20M9.5 4 8 10l4 10 4-10-1.5-6"/></symbol>
+  <symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h9M19 7h1M4 17h1M11 17h9"/><circle cx="16" cy="7" r="2.5"/><circle cx="8" cy="17" r="2.5"/></symbol>
+  <symbol id="i-full" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+  <symbol id="i-reload" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.5-5.8M20 4v5h-5"/></symbol>
+  <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v6H4V6h6"/></symbol>
+  <symbol id="i-expand" viewBox="0 0 24 24"><path d="M4 14v6h6M20 10V4h-6M4 20l7-7M20 4l-7 7"/></symbol>
+  <symbol id="i-grip" viewBox="0 0 24 24"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></symbol>
+  <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.5a2.5 2.5 0 1 1 3.6 2.2c-.8.4-1.2 1-1.2 1.8M12 17h.01"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M5 7h14M9 7V4h6v3M7 7l1 13h8l1-13"/></symbol>
+  <symbol id="i-up" viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
+</svg>
+
+<header class="bar" id="bar">
+  <div class="brand">
+    <svg viewBox="0 0 32 32" aria-hidden="true"><rect x="3" y="3" width="12" height="12" rx="2.5" fill="var(--tally)"/><rect x="17" y="3" width="12" height="12" rx="2.5" fill="var(--key)"/><rect x="3" y="17" width="12" height="12" rx="2.5" fill="var(--key)"/><rect x="17" y="17" width="12" height="12" rx="2.5" fill="var(--key)"/></svg>
+    <span>實況牆</span>
+  </div>
+  <form class="add" id="add-form" autocomplete="off">
+    <input id="add-input" type="text" inputmode="url" spellcheck="false" autocapitalize="off" aria-label="新增頻道" placeholder="頻道名稱或網址，可用逗號一次加多台">
+    <button type="submit"><svg class="ic"><use href="#i-plus"/></svg>加入</button>
+  </form>
+  <div class="bar__spacer"></div>
+  <div class="seg" role="group" aria-label="版面">
+    <button class="btn" type="button" data-layout="grid" aria-pressed="true" title="格狀：每台一樣大 (G)"><svg class="ic"><use href="#i-grid"/></svg><span class="lbl">格狀</span></button>
+    <button class="btn" type="button" data-layout="focus" aria-pressed="false" title="焦點：一台放大，其餘縮小 (G)"><svg class="ic"><use href="#i-focus"/></svg><span class="lbl">焦點</span></button>
+  </div>
+  <div class="vol">
+    <button class="btn" type="button" id="btn-mute" title="全部靜音／恢復收聽 (M)" aria-label="全部靜音或恢復收聽"><svg class="ic"><use id="mute-ic" href="#i-mute"/></svg></button>
+    <input type="range" id="vol" min="0" max="100" step="1" aria-label="音量">
+  </div>
+  <button class="btn" type="button" id="btn-chat" aria-pressed="false" title="聊天室 (C)"><svg class="ic"><use href="#i-chat"/></svg><span class="lbl">聊天</span></button>
+  <button class="btn" type="button" data-pop="groups" aria-expanded="false" title="群組：儲存與載入頻道組合"><svg class="ic"><use href="#i-groups"/></svg><span class="lbl">群組</span></button>
+  <button class="btn" type="button" data-pop="points" aria-expanded="false" title="忠誠點數"><svg class="ic"><use href="#i-points"/></svg><span class="lbl">點數</span></button>
+  <button class="btn" type="button" data-pop="settings" aria-expanded="false" title="設定"><svg class="ic"><use href="#i-settings"/></svg><span class="lbl">設定</span></button>
+  <button class="btn" type="button" data-pop="help" aria-expanded="false" title="說明與快捷鍵 (?)" aria-label="說明與快捷鍵"><svg class="ic"><use href="#i-help"/></svg></button>
+  <button class="btn" type="button" id="btn-full" title="全螢幕 (F)" aria-label="全螢幕"><svg class="ic"><use href="#i-full"/></svg></button>
+  <button class="btn" type="button" id="btn-hidebar" title="收起工具列 (H)" aria-label="收起工具列"><svg class="ic"><use href="#i-up"/></svg></button>
+</header>
+<button class="barpill" type="button" id="btn-showbar"><svg class="ic"><use href="#i-down"/></svg>顯示工具列</button>
+
+<main class="stage">
+  <section class="wall" id="wall" aria-label="實況牆">
+    <div class="notice" id="notice" hidden><p id="notice-text"></p><button class="tbtn" type="button" id="notice-close" aria-label="關閉提示"><svg class="ic"><use href="#i-x"/></svg></button></div>
+    <div class="empty" id="empty">
+      <div class="empty__in">
+        <h1>把想看的台，一次排上牆</h1>
+        <p>輸入 Twitch 頻道名稱或貼上網址。用逗號或空白隔開，就能一次加入好幾台。</p>
+        <form class="add" id="add-form-2" autocomplete="off">
+          <input id="add-input-2" type="text" inputmode="url" spellcheck="false" autocapitalize="off" aria-label="新增頻道" placeholder="例如：頻道A, 頻道B">
+          <button type="submit"><svg class="ic"><use href="#i-plus"/></svg>加入</button>
+        </form>
+        <div class="empty__groups" id="empty-groups" hidden></div>
+        <div class="empty__tip">按 <kbd>?</kbd> 可以看快捷鍵和登入、點數的說明。</div>
+      </div>
+    </div>
+  </section>
+  <div class="divider" id="divider" role="separator" aria-orientation="vertical" aria-label="調整聊天室寬度" tabindex="0" hidden></div>
+  <aside class="chat" id="chat" aria-label="聊天室" hidden>
+    <div class="chat__head">
+      <div class="chat__tabs" id="chat-tabs" role="tablist" aria-label="選擇聊天室"></div>
+      <button class="tbtn" type="button" id="chat-close" aria-label="關閉聊天室" title="關閉聊天室"><svg class="ic"><use href="#i-x"/></svg></button>
+    </div>
+    <div class="chat__body" id="chat-body"></div>
+  </aside>
+</main>
+
+<div class="backdrop" id="backdrop" hidden></div>
+
+<section class="pop" id="pop-groups" role="dialog" aria-label="群組" hidden>
+  <h2>群組</h2>
+  <p>把常看的頻道組合存起來，下次一鍵排好。</p>
+  <form class="inline" id="group-form" autocomplete="off">
+    <input class="field" id="group-name" type="text" maxlength="24" placeholder="群組名稱" aria-label="群組名稱">
+    <button class="btn btn--solid" type="submit" id="group-save">儲存目前的牆</button>
+  </form>
+  <ul class="list" id="group-list"></ul>
+  <div class="pop__foot">
+    <button class="btn btn--line" type="button" id="btn-share"><svg class="ic"><use href="#i-link"/></svg>複製這面牆的連結</button>
+  </div>
+</section>
+
+<section class="pop" id="pop-points" role="dialog" aria-label="忠誠點數" hidden>
+  <h2>忠誠點數</h2>
+  <p>Twitch 只在 <strong>twitch.tv 本站的頻道頁</strong>計點，牆上的嵌入播放器不會累積；而且同一個帳號同時大約只有 <strong>2 台</strong>會計點。</p>
+  <p>所以點數交給「點數分頁」：它會自動領獎勵箱，並輪流停留在你勾選的頻道，讓每一台都輪得到。</p>
+  <div id="points-body"></div>
+  <div class="pop__foot">
+    <a class="btn btn--line" href="./twitch-points.user.js" target="_blank" rel="noopener">安裝點數腳本</a>
+  </div>
+</section>
+
+<section class="pop" id="pop-settings" role="dialog" aria-label="設定" hidden>
+  <h2>設定</h2>
+  <div class="row"><span>主題</span>
+    <div class="seg" role="group" aria-label="主題" data-setting="theme">
+      <button class="btn" type="button" data-value="system">跟隨系統</button><button class="btn" type="button" data-value="dark">深色</button><button class="btn" type="button" data-value="light">淺色</button>
+    </div>
+  </div>
+  <div class="row"><span>格狀欄數</span>
+    <div class="seg" role="group" aria-label="格狀欄數" data-setting="cols">
+      <button class="btn" type="button" data-value="0">自動</button><button class="btn" type="button" data-value="1">1</button><button class="btn" type="button" data-value="2">2</button><button class="btn" type="button" data-value="3">3</button><button class="btn" type="button" data-value="4">4</button>
+    </div>
+  </div>
+  <div class="row"><label for="set-qmain">收聽中／放大的畫面</label>
+    <select class="field" id="set-qmain" data-setting="qMain"><option value="auto">自動</option><option value="source">原畫</option><option value="720">720p</option></select>
+  </div>
+  <div class="row"><label for="set-qothers"><span>其他畫面<small>畫質越低越省記憶體和流量</small></span></label>
+    <select class="field" id="set-qothers" data-setting="qOthers"><option value="auto">自動</option><option value="720">720p</option><option value="480">480p</option><option value="360">360p</option><option value="160">160p</option></select>
+  </div>
+  <div class="row"><span id="lbl-multi">允許多台同時出聲</span><button class="switch" type="button" role="switch" aria-checked="false" aria-labelledby="lbl-multi" data-setting="multiAudio"></button></div>
+  <div class="row"><span id="lbl-follow">聊天室跟著收聽中的頻道</span><button class="switch" type="button" role="switch" aria-checked="true" aria-labelledby="lbl-follow" data-setting="chatFollow"></button></div>
+  <div class="pop__foot">
+    <button class="btn btn--line btn--danger" type="button" id="btn-reset">清除所有資料</button>
+  </div>
+</section>
+
+<section class="pop" id="pop-help" role="dialog" aria-label="說明" hidden>
+  <h2>說明</h2>
+  <h3>快捷鍵</h3>
+  <dl class="keys">
+    <dt><kbd>/</kbd></dt><dd>新增頻道</dd>
+    <dt><kbd>1</kbd>–<kbd>9</kbd></dt><dd>收聽第幾台（再按一次靜音）</dd>
+    <dt><kbd>M</kbd></dt><dd>全部靜音／恢復收聽</dd>
+    <dt><kbd>G</kbd></dt><dd>切換格狀與焦點版面</dd>
+    <dt><kbd>C</kbd></dt><dd>開關聊天室</dd>
+    <dt><kbd>H</kbd></dt><dd>收起／顯示工具列</dd>
+    <dt><kbd>F</kbd></dt><dd>全螢幕</dd>
+  </dl>
+  <h3>排版</h3>
+  <p>拖曳畫面下方的名牌可以交換位置；在名牌上連按兩下可以放大那一台。畫面太小時 Twitch 可能不會自動播放，點一下畫面就會開始。</p>
+  <h3>聊天室無法登入？</h3>
+  <p>嵌入的聊天室要用到跨站 Cookie。<strong>Chrome</strong> 預設可用；<strong>Brave</strong> 請在這個網站的 Shields 把 Cookie 改成「允許所有 Cookie」；<strong>Safari</strong> 要在「設定 › 隱私權」關閉「防止跨網站追蹤」。不想改設定的話，按名牌上的 ↗ 到 Twitch 本站聊天。</p>
+  <h3>關於</h3>
+  <p>實況牆不是 Twitch 官方產品，播放器與聊天室由 Twitch 的官方嵌入功能提供。所有設定只存在這台電腦的瀏覽器裡。</p>
+</section>
+
+<div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+
+<script>
+(() => {
+'use strict';
+
+/* ── 基本工具 ─────────────────────────────────────────────── */
+const $ = (sel, root = document) => root.querySelector(sel);
+const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const STORE_KEY = 'streamwall.v1';
+const NAME_RE = /^[a-z0-9_]{2,25}$/;
+const MAX_TILES = 16;
+const HEAVY_AT = 7;
+
+function h(tag, attrs, ...kids) {
+  const el = document.createElement(tag);
+  if (attrs) for (const [k, v] of Object.entries(attrs)) {
+    if (v == null || v === false) continue;
+    if (k === 'class') el.className = v;
+    else if (k === 'text') el.textContent = v;
+    else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+    else el.setAttribute(k, v === true ? '' : v);
+  }
+  for (const kid of kids) if (kid != null) el.append(kid);
+  return el;
+}
+function icon(name) {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('class', 'ic');
+  svg.setAttribute('aria-hidden', 'true');
+  const use = document.createElementNS(SVG_NS, 'use');
+  use.setAttribute('href', '#i-' + name);
+  svg.append(use);
+  return svg;
+}
+const safe = fn => { try { return fn(); } catch (e) { return undefined; } };
+const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
+
+function toast(msg) {
+  const el = h('div', { class: 'toast', text: msg });
+  $('#toasts').append(el);
+  setTimeout(() => el.remove(), 2800);
+}
+
+/* 把使用者輸入的文字拆成頻道名稱 */
+function parseChannels(text) {
+  const good = [], bad = [];
+  for (let raw of String(text || '').split(/[\s,，、;；]+/)) {
+    raw = raw.trim();
+    if (!raw) continue;
+    let name = raw;
+    const m = raw.match(/twitch\.tv\/(?:popout\/|embed\/)?([A-Za-z0-9_]+)/i);
+    if (m) name = m[1];
+    name = name.replace(/^[@#]/, '').toLowerCase();
+    if (NAME_RE.test(name)) { if (!good.includes(name)) good.push(name); }
+    else bad.push(raw);
+  }
+  return { good, bad };
+}
+const cleanList = list => Array.isArray(list)
+  ? [...new Set(list.map(x => String(x).toLowerCase()).filter(x => NAME_RE.test(x)))].slice(0, MAX_TILES)
+  : [];
+
+/* ── 狀態 ─────────────────────────────────────────────────── */
+const DEFAULT_SETTINGS = { theme: 'system', cols: 0, qMain: 'auto', qOthers: '360', multiAudio: false, chatFollow: true, volume: 60 };
+const DEFAULT_CHAT = { open: false, width: 340, channel: null };
+
+function loadState() {
+  let s = {};
+  try { s = JSON.parse(localStorage.getItem(STORE_KEY)) || {}; } catch (e) {}
+  const settings = Object.assign({}, DEFAULT_SETTINGS, s.settings || {});
+  settings.cols = clamp(parseInt(settings.cols, 10) || 0, 0, 4);
+  settings.volume = clamp(parseInt(settings.volume, 10) || 0, 0, 100);
+  const chat = Object.assign({}, DEFAULT_CHAT, s.chat || {});
+  chat.width = clamp(parseInt(chat.width, 10) || 340, 260, 560);
+  return {
+    channels: cleanList(s.channels),
+    layout: s.layout === 'focus' ? 'focus' : 'grid',
+    mainId: typeof s.mainId === 'string' ? s.mainId : null,
+    settings, chat,
+    presets: Array.isArray(s.presets)
+      ? s.presets.map(p => ({ name: String(p && p.name || '').slice(0, 24), channels: cleanList(p && p.channels) })).filter(p => p.name && p.channels.length)
+      : []
+  };
+}
+const state = loadState();
+const tiles = new Map();          // 頻道名稱 → tile 物件
+const env = { mode: 'pending' };  // 'api'（官方 JS 播放器）｜'iframe'（純嵌入）｜'demo'（示範畫面）
+let lastOnAir = null;
+let seq = 0;
+
+let saveTimer = 0;
+function save() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    try {
+      localStorage.setItem(STORE_KEY, JSON.stringify({
+        channels: state.channels, layout: state.layout, mainId: state.mainId,
+        settings: state.settings, chat: state.chat, presets: state.presets
+      }));
+    } catch (e) {}
+  }, 150);
+  syncHash();
+}
+
+/* 網址 # 後面記著目前的頻道，方便分享 */
+const hashParams = () => new URLSearchParams(location.hash.replace(/^#/, ''));
+const demoFlag = hashParams().has('demo');
+function syncHash() {
+  const parts = [];
+  if (demoFlag) parts.push('demo');
+  if (state.channels.length) parts.push('ch=' + state.channels.join(','));
+  const want = parts.length ? '#' + parts.join('&') : '';
+  if (location.hash === want) return;
+  safe(() => history.replaceState(null, '', want || location.pathname + location.search));
+}
+
+/* Twitch 要求列出嵌入它的所有網域 */
+const PARENTS = (() => {
+  const set = new Set();
+  if (location.hostname) set.add(location.hostname);
+  safe(() => { const ao = location.ancestorOrigins; for (let i = 0; ao && i < ao.length; i++) safe(() => set.add(new URL(ao[i]).hostname)); });
+  return [...set].filter(Boolean);
+})();
+const parentQuery = () => PARENTS.map(p => 'parent=' + encodeURIComponent(p)).join('&');
+
+/* ── 元素 ─────────────────────────────────────────────────── */
+const wall = $('#wall');
+const emptyEl = $('#empty');
+const chatEl = $('#chat');
+const dividerEl = $('#divider');
+
+/* ── 主題 ─────────────────────────────────────────────────── */
+const mqLight = matchMedia('(prefers-color-scheme: light)');
+const resolvedTheme = () => state.settings.theme === 'system' ? (mqLight.matches ? 'light' : 'dark') : state.settings.theme;
+function applyTheme() {
+  const t = resolvedTheme();
+  if (document.documentElement.dataset.theme !== t) document.documentElement.dataset.theme = t;
+  renderChat();
+}
+mqLight.addEventListener('change', applyTheme);
+
+/* ── 版面計算 ─────────────────────────────────────────────── */
+const GAP = 6, UMD = 30;
+
+/* 在 W×H 裡排 n 個 16:9 畫面（含名牌），回傳每格大小與位置（相對於格狀區左上角） */
+function fitGrid(n, W, H, forced) {
+  if (n < 1 || W <= 0 || H <= 0) return null;
+  let best = null;
+  const lo = forced ? Math.min(forced, n) : 1, hi = forced ? Math.min(forced, n) : n;
+  for (let c = lo; c <= hi; c++) {
+    const r = Math.ceil(n / c);
+    let w = (W - (c - 1) * GAP) / c;
+    let ht = w * 9 / 16 + UMD;
+    const maxH = (H - (r - 1) * GAP) / r;
+    if (ht > maxH) { ht = maxH; w = (ht - UMD) * 16 / 9; }
+    if (w <= 20) continue;
+    if (!best || w > best.w + 0.5) best = { c, r, w, h: ht };
+  }
+  if (!best) return null;
+  const { c, r, w } = best, ht = best.h;
+  const gw = c * w + (c - 1) * GAP, gh = r * ht + (r - 1) * GAP;
+  const cells = [];
+  for (let i = 0; i < n; i++) {
+    const row = Math.floor(i / c), col = i % c;
+    const inRow = row === r - 1 ? n - (r - 1) * c : c;
+    const shift = (c - inRow) * (w + GAP) / 2;
+    cells.push({ x: shift + col * (w + GAP), y: row * (ht + GAP), w, h: ht });
+  }
+  return { w, h: ht, gw, gh, cells };
+}
+
+/* 焦點版面：一台放大，其餘排在右側或下方，挑主畫面最大的排法 */
+function fitFocus(n, W, H) {
+  if (n === 1) { const g = fitGrid(1, W, H); return g && place(g.cells, (W - g.gw) / 2, (H - g.gh) / 2); }
+  let best = null;
+  for (const side of ['right', 'bottom']) for (const f of [0.6, 0.66, 0.72, 0.78, 0.84]) {
+    const m = side === 'right' ? fitGrid(1, (W - GAP) * f, H) : fitGrid(1, W, (H - GAP) * f);
+    if (!m) continue;
+    const o = side === 'right' ? fitGrid(n - 1, W - m.gw - GAP, H) : fitGrid(n - 1, W, H - m.gh - GAP);
+    if (!o) continue;
+    const score = m.w + Math.min(o.w, m.w * 0.5) * 1.3 - (o.w < 150 ? 4000 : 0);
+    if (!best || score > best.score) best = { score, side, m, o };
+  }
+  if (!best) { const g = fitGrid(n, W, H); return g && place(g.cells, (W - g.gw) / 2, (H - g.gh) / 2); }
+  const { side, m, o } = best;
+  if (side === 'right') {
+    const total = m.gw + GAP + o.gw, x0 = (W - total) / 2;
+    return [...place(m.cells, x0, (H - m.gh) / 2), ...place(o.cells, x0 + m.gw + GAP, (H - o.gh) / 2)];
+  }
+  const total = m.gh + GAP + o.gh, y0 = (H - total) / 2;
+  return [...place(m.cells, (W - m.gw) / 2, y0), ...place(o.cells, (W - o.gw) / 2, y0 + m.gh + GAP)];
+}
+const place = (cells, dx, dy) => cells.map(c => ({ x: c.x + dx, y: c.y + dy, w: c.w, h: c.h }));
+
+function visualOrder() {
+  if (state.layout !== 'focus' || !state.mainId) return state.channels.slice();
+  return [state.mainId, ...state.channels.filter(c => c !== state.mainId)];
+}
+
+let layoutQueued = false;
+function relayout() {
+  if (layoutQueued) return;
+  layoutQueued = true;
+  requestAnimationFrame(() => { layoutQueued = false; doLayout(); });
+}
+function doLayout() {
+  const n = state.channels.length;
+  emptyEl.hidden = n > 0;
+  if (!n) return;
+  if (state.layout === 'focus' && !tiles.has(state.mainId)) state.mainId = onAirIds()[0] || state.channels[0];
+  const W = wall.clientWidth - GAP * 2, H = wall.clientHeight - GAP * 2;
+  if (W <= 0 || H <= 0) return;
+  let boxes;
+  if (state.layout === 'focus') boxes = fitFocus(n, W, H);
+  else { const g = fitGrid(n, W, H, state.settings.cols); boxes = g && place(g.cells, (W - g.gw) / 2, (H - g.gh) / 2); }
+  if (!boxes) return;
+  visualOrder().forEach((id, i) => {
+    const t = tiles.get(id), b = boxes[i];
+    if (!t || !b) return;
+    t.box = { x: b.x + GAP, y: b.y + GAP, w: b.w, h: b.h };
+    const st = t.el.style;
+    st.left = Math.round(t.box.x) + 'px'; st.top = Math.round(t.box.y) + 'px';
+    st.width = Math.round(b.w) + 'px'; st.height = Math.round(b.h) + 'px';
+    t.el.classList.toggle('is-main', state.layout === 'focus' && id === state.mainId);
+  });
+  state.channels.forEach((id, i) => { const t = tiles.get(id); if (t) t.keyEl.textContent = i < 9 ? String(i + 1) : ''; });
+}
+new ResizeObserver(relayout).observe(wall);
+
+/* ── 畫面（tile） ─────────────────────────────────────────── */
+const STATUS_TEXT = { loading: '連線中', live: '', offline: '離線', blocked: '點畫面播放', stalled: '沒有回應', demo: '' };
+function setStatus(tile, status) {
+  tile.status = status;
+  tile.stateEl.textContent = STATUS_TEXT[status] || '';
+}
+
+function createTile(id) {
+  const tile = { id, audio: false, player: null, ready: false, lastQ: null, guardUntil: 0, status: 'loading', box: null };
+  tile.playerEl = h('div', { class: 'tile__player' });
+  tile.keyEl = h('span', { class: 'tile__key', 'aria-hidden': 'true' });
+  tile.stateEl = h('span', { class: 'tile__state' });
+  tile.audioBtn = h('button', {
+    class: 'tbtn tbtn--audio', type: 'button', 'aria-pressed': 'false', title: '收聽這台', 'aria-label': `收聽 ${id}`,
+    onclick: () => setAudio(id, !tile.audio)
+  }, icon('mute'));
+  const grip = h('button', {
+    class: 'tile__grip', type: 'button', title: '拖曳交換位置', 'aria-label': `調整 ${id} 的順序，用左右方向鍵移動`,
+    onkeydown: e => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      e.preventDefault();
+      moveBy(id, e.key === 'ArrowLeft' ? -1 : 1);
+    }
+  }, icon('grip'));
+  const umd = h('footer', { class: 'tile__umd' },
+    grip, tile.keyEl,
+    h('span', { class: 'tile__id' }, h('span', { class: 'lamp', 'aria-hidden': 'true' }), h('span', { class: 'tile__name', text: id }), tile.stateEl),
+    h('div', { class: 'tile__actions' },
+      h('button', { class: 'tbtn', type: 'button', title: '放大這台', 'aria-label': `放大 ${id}`, onclick: () => setMain(id) }, icon('expand')),
+      h('button', { class: 'tbtn tbtn--opt', type: 'button', title: '重新載入', 'aria-label': `重新載入 ${id}`, onclick: () => { mount(tile); toast(`已重新載入 ${id}`); } }, icon('reload')),
+      h('a', { class: 'tbtn tbtn--opt', href: `https://www.twitch.tv/${id}`, target: '_blank', rel: 'noopener', title: '在 Twitch 開啟', 'aria-label': `在 Twitch 開啟 ${id}` }, icon('external')),
+      h('button', { class: 'tbtn', type: 'button', title: '從牆上移除', 'aria-label': `移除 ${id}`, onclick: () => removeChannel(id) }, icon('x'))
+    ),
+    tile.audioBtn
+  );
+  umd.addEventListener('pointerdown', e => dragStart(e, tile));
+  umd.addEventListener('pointermove', dragMove);
+  umd.addEventListener('pointerup', e => dragEnd(e, true));
+  umd.addEventListener('pointercancel', e => dragEnd(e, false));
+  umd.addEventListener('dblclick', e => { if (!e.target.closest('.tbtn')) setMain(id); });
+  tile.el = h('article', { class: 'tile', 'aria-label': `${id} 的實況` },
+    h('div', { class: 'tile__screen' }, tile.playerEl,
+      h('div', { class: 'tile__bars', 'aria-hidden': 'true' }, h('span', { class: 'tile__barslabel', text: '示範畫面' }))),
+    umd);
+  wall.append(tile.el);
+  tiles.set(id, tile);
+  if (env.mode !== 'pending') mount(tile);
+  return tile;
+}
+
+function unmount(tile) {
+  tile.player = null; tile.ready = false; tile.lastQ = null;
+  clearTimeout(tile.stallTimer);
+  tile.playerEl.replaceChildren();
+}
+
+function mount(tile) {
+  unmount(tile);
+  tile.el.classList.toggle('is-demo', env.mode === 'demo');
+  tile.audioBtn.disabled = env.mode === 'iframe';
+  if (env.mode === 'demo') { setStatus(tile, 'demo'); return; }
+  setStatus(tile, 'loading');
+  if (env.mode === 'api') {
+    const slotId = `sw-player-${tile.id}-${++seq}`;
+    tile.playerEl.append(h('div', { class: 'tile__slot', id: slotId }));
+    let p;
+    try {
+      p = new window.Twitch.Player(slotId, { channel: tile.id, width: '100%', height: '100%', parent: PARENTS, autoplay: true, muted: !tile.audio });
+    } catch (e) { tile.playerEl.replaceChildren(); return mountIframe(tile); }
+    tile.player = p;
+    const E = window.Twitch.Player;
+    const on = (ev, fn) => { if (ev) p.addEventListener(ev, () => { if (tile.player === p) fn(); }); };
+    on(E.READY, () => {
+      tile.ready = true;
+      clearTimeout(tile.stallTimer);
+      safe(() => p.setVolume(state.settings.volume / 100));
+      safe(() => p.setMuted(!tile.audio));
+      guard(tile);
+      if (tile.status === 'stalled') setStatus(tile, 'loading');
+    });
+    on(E.PLAYING, () => { setStatus(tile, 'live'); queueQuality(tile); });
+    on(E.ONLINE, () => setStatus(tile, 'live'));
+    on(E.OFFLINE, () => setStatus(tile, 'offline'));
+    on(E.ENDED, () => setStatus(tile, 'offline'));
+    on(E.PLAYBACK_BLOCKED, () => setStatus(tile, 'blocked'));
+    tile.stallTimer = setTimeout(() => {
+      if (tile.player === p && !tile.ready) { setStatus(tile, 'stalled'); showStallNotice(); }
+    }, 15000);
+  } else mountIframe(tile);
+}
+
+function mountIframe(tile) {
+  tile.playerEl.append(h('iframe', {
+    src: `https://player.twitch.tv/?channel=${encodeURIComponent(tile.id)}&${parentQuery()}&muted=true&autoplay=true`,
+    title: `${tile.id} 的實況`, allow: 'autoplay; fullscreen; picture-in-picture', allowfullscreen: true
+  }));
+  setStatus(tile, 'live');
+}
+
+/* ── 畫質：主要畫面用好畫質，其他降低以節省資源 ───────────── */
+const isPrimary = tile => tile.audio || (state.layout === 'focus' && tile.id === state.mainId);
+function pickQuality(list, want) {
+  if (want === 'auto') return 'auto';
+  const opts = [];
+  for (const q of list) {
+    const group = typeof q === 'string' ? q : (q && (q.group || q.name));
+    if (!group || group === 'auto') continue;
+    const label = typeof q === 'string' ? q : `${q.name || ''} ${q.group || ''}`;
+    const m = label.match(/(\d{3,4})p/);
+    const known = typeof q === 'object' && q && Number(q.height) > 0 ? Number(q.height) : 0;
+    opts.push({ group, height: known || (m ? parseInt(m[1], 10) : (group === 'chunked' ? 9999 : 0)) });
+  }
+  if (!opts.length) return null;
+  opts.sort((a, b) => b.height - a.height);
+  if (want === 'source') return (opts.find(o => o.group === 'chunked') || opts[0]).group;
+  const cap = parseInt(want, 10);
+  return (opts.find(o => o.height && o.height <= cap) || opts[opts.length - 1]).group;
+}
+function applyQuality(tile) {
+  const p = tile.player;
+  if (!p || !tile.ready || typeof p.getQualities !== 'function') return false;
+  const list = safe(() => p.getQualities());
+  if (!Array.isArray(list) || !list.length) return false;
+  const target = pickQuality(list, isPrimary(tile) ? state.settings.qMain : state.settings.qOthers);
+  if (target && target !== tile.lastQ) { safe(() => p.setQuality(target)); tile.lastQ = target; }
+  return true;
+}
+function queueQuality(tile) {
+  const p = tile.player;
+  let tries = 0;
+  const attempt = () => { if (tile.player !== p) return; if (!applyQuality(tile) && ++tries < 6) setTimeout(attempt, 1500 * tries); };
+  attempt();
+}
+const applyQualityAll = () => tiles.forEach(t => { applyQuality(t); });
+
+/* ── 聲音：預設同時只收聽一台 ─────────────────────────────── */
+const onAirIds = () => state.channels.filter(id => tiles.get(id) && tiles.get(id).audio);
+const guard = tile => { tile.guardUntil = Date.now() + 2500; };
+function pushMute(tile) {
+  guard(tile);
+  if (!tile.player || !tile.ready) return;
+  safe(() => tile.player.setMuted(!tile.audio));
+  if (tile.audio) safe(() => tile.player.setVolume(state.settings.volume / 100));
+}
+function setAudio(id, on) {
+  const tile = tiles.get(id);
+  if (!tile) return;
+  if (on && !state.settings.multiAudio) tiles.forEach(o => { if (o !== tile && o.audio) { o.audio = false; pushMute(o); } });
+  tile.audio = !!on;
+  pushMute(tile);
+  if (on) lastOnAir = id;
+  afterAudioChange(on ? id : null);
+}
+function afterAudioChange(newId) {
+  tiles.forEach(t => {
+    t.el.classList.toggle('is-onair', t.audio);
+    t.audioBtn.setAttribute('aria-pressed', String(t.audio));
+    t.audioBtn.title = t.audioBtn.disabled ? '請直接在播放器上調整聲音' : (t.audio ? '靜音這台' : '收聽這台');
+    t.audioBtn.replaceChildren(icon(t.audio ? 'volume' : 'mute'));
+  });
+  const live = onAirIds();
+  $('#mute-ic').setAttribute('href', live.length ? '#i-volume' : '#i-mute');
+  document.title = (live.length ? '● ' + live.join('、') + '｜' : '') + '實況牆';
+  if (newId && state.settings.chatFollow && state.chat.channel !== newId) { state.chat.channel = newId; renderChat(); save(); }
+  applyQualityAll();
+}
+function toggleMuteAll() {
+  const live = onAirIds();
+  if (live.length) { live.forEach(id => { const t = tiles.get(id); t.audio = false; pushMute(t); }); afterAudioChange(null); return; }
+  const id = tiles.has(lastOnAir) ? lastOnAir : (state.layout === 'focus' && tiles.has(state.mainId) ? state.mainId : state.channels[0]);
+  if (id) setAudio(id, true);
+}
+/* 使用者直接在播放器裡調聲音時，讓收聽燈跟著實際狀態走 */
+setInterval(() => {
+  if (env.mode !== 'api') return;
+  const now = Date.now();
+  let changed = null, any = false;
+  tiles.forEach(t => {
+    if (!t.player || !t.ready || now < t.guardUntil) return;
+    const muted = safe(() => t.player.getMuted());
+    if (typeof muted !== 'boolean' || muted !== t.audio) return;
+    t.audio = !muted; any = true;
+    if (t.audio) changed = t.id;
+  });
+  if (!any) return;
+  if (changed && !state.settings.multiAudio) tiles.forEach(o => { if (o.id !== changed && o.audio) { o.audio = false; pushMute(o); } });
+  if (changed) lastOnAir = changed;
+  afterAudioChange(changed);
+}, 1500);
+
+/* ── 頻道的增刪與排序 ─────────────────────────────────────── */
+function addChannels(list, opts = {}) {
+  const added = [], dup = [];
+  let full = false;
+  for (const id of list) {
+    if (tiles.has(id)) { dup.push(id); continue; }
+    if (state.channels.length >= MAX_TILES) { full = true; break; }
+    state.channels.push(id);
+    createTile(id);
+    added.push(id);
+  }
+  if (added.length) { afterChannelsChange(); }
+  if (!opts.silent) {
+    if (added.length) toast(`已加入 ${added.join('、')}`);
+    if (dup.length) toast(`${dup.join('、')} 已經在牆上`);
+    if (full) toast(`一面牆最多 ${MAX_TILES} 台`);
+    else if (added.length && state.channels.length >= HEAVY_AT && state.channels.length - added.length < HEAVY_AT) toast('台數多了會比較吃資源，可以到設定把其他畫面調成 160p');
+  }
+  return added;
+}
+function removeChannel(id) {
+  const tile = tiles.get(id);
+  if (!tile) return;
+  unmount(tile);
+  tile.el.remove();
+  tiles.delete(id);
+  state.channels = state.channels.filter(c => c !== id);
+  if (state.mainId === id) state.mainId = null;
+  if (state.chat.channel === id) state.chat.channel = null;
+  afterChannelsChange();
+  afterAudioChange(null);
+}
+function applyChannelSet(list) {
+  for (const id of state.channels.slice()) if (!list.includes(id)) removeChannel(id);
+  addChannels(list, { silent: true });
+  state.channels = list.filter(id => tiles.has(id));
+  afterChannelsChange();
+}
+function afterChannelsChange() {
+  relayout(); renderChat(); renderEmptyGroups(); save();
+}
+function swap(a, b) {
+  const i = state.channels.indexOf(a), j = state.channels.indexOf(b);
+  if (i < 0 || j < 0 || i === j) return;
+  [state.channels[i], state.channels[j]] = [state.channels[j], state.channels[i]];
+  if (state.layout === 'focus' && (a === state.mainId || b === state.mainId)) { state.mainId = a === state.mainId ? b : a; applyQualityAll(); }
+  afterChannelsChange();
+}
+function moveBy(id, delta) {
+  const i = state.channels.indexOf(id), j = i + delta;
+  if (i < 0 || j < 0 || j >= state.channels.length) return;
+  swap(id, state.channels[j]);
+}
+function setLayout(layout) {
+  state.layout = layout;
+  if (layout === 'focus' && !tiles.has(state.mainId)) state.mainId = onAirIds()[0] || state.channels[0] || null;
+  $$('[data-layout]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.layout === layout)));
+  relayout(); applyQualityAll(); save();
+}
+function setMain(id) {
+  if (!tiles.has(id)) return;
+  state.mainId = id;
+  if (state.layout !== 'focus') { setLayout('focus'); }
+  else { relayout(); applyQualityAll(); save(); }
+  /* 原本有在收聽的話，聲音跟著放大的那台走 */
+  if (onAirIds().length && !state.settings.multiAudio && !tiles.get(id).audio) setAudio(id, true);
+}
+
+/* ── 拖曳名牌交換位置 ─────────────────────────────────────── */
+let drag = null;
+function dragStart(e, tile) {
+  if (e.button !== 0 || e.target.closest('.tbtn')) return;
+  drag = { id: tile.id, x: e.clientX, y: e.clientY, active: false, target: null, pid: e.pointerId, strip: e.currentTarget };
+  safe(() => e.currentTarget.setPointerCapture(e.pointerId));
+}
+function dragMove(e) {
+  if (!drag || e.pointerId !== drag.pid) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+  const tile = tiles.get(drag.id);
+  if (!tile) return;
+  if (!drag.active) {
+    if (Math.hypot(dx, dy) < 6) return;
+    drag.active = true;
+    wall.classList.add('is-dragging');
+    tile.el.classList.add('is-dragged');
+  }
+  tile.el.style.transform = `translate(${dx}px, ${dy}px)`;
+  const r = wall.getBoundingClientRect(), px = e.clientX - r.left, py = e.clientY - r.top;
+  let target = null;
+  tiles.forEach(o => { const b = o.box; if (o !== tile && b && px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h) target = o.id; });
+  if (target !== drag.target) {
+    if (drag.target && tiles.get(drag.target)) tiles.get(drag.target).el.classList.remove('is-droptarget');
+    if (target) tiles.get(target).el.classList.add('is-droptarget');
+    drag.target = target;
+  }
+}
+function dragEnd(e, commit) {
+  if (!drag || e.pointerId !== drag.pid) return;
+  const d = drag; drag = null;
+  safe(() => d.strip.releasePointerCapture(d.pid));
+  wall.classList.remove('is-dragging');
+  const tile = tiles.get(d.id);
+  if (tile) { tile.el.style.transform = ''; tile.el.classList.remove('is-dragged'); }
+  if (d.target && tiles.get(d.target)) tiles.get(d.target).el.classList.remove('is-droptarget');
+  if (commit && d.active && d.target) swap(d.id, d.target);
+}
+
+/* ── 聊天室 ───────────────────────────────────────────────── */
+let chatKey = '';
+function renderChat() {
+  const open = state.chat.open;
+  chatEl.hidden = !open; dividerEl.hidden = !open;
+  $('#btn-chat').setAttribute('aria-pressed', String(open));
+  document.documentElement.style.setProperty('--chat-w', state.chat.width + 'px');
+  if (!open) { if (chatKey) { $('#chat-body').replaceChildren(); chatKey = ''; } return; }
+  if (!state.channels.includes(state.chat.channel)) state.chat.channel = onAirIds()[0] || (tiles.has(state.mainId) ? state.mainId : state.channels[0]) || null;
+  const tabs = $('#chat-tabs');
+  tabs.replaceChildren(...state.channels.map(id => h('button', {
+    class: 'chat__tab', type: 'button', role: 'tab', 'aria-selected': String(id === state.chat.channel), text: id,
+    onclick: () => { state.chat.channel = id; renderChat(); save(); }
+  })));
+  const sel = $('[aria-selected="true"]', tabs);
+  if (sel && sel.scrollIntoView) safe(() => sel.scrollIntoView({ block: 'nearest', inline: 'nearest' }));
+  const ch = state.chat.channel, body = $('#chat-body');
+  const key = ch ? `${ch}|${resolvedTheme()}|${env.mode}` : 'none';
+  if (key === chatKey) return;
+  chatKey = key;
+  if (!ch) { body.replaceChildren(h('p', { class: 'chat__msg', text: '加入頻道後，這裡會顯示聊天室。' })); return; }
+  if (env.mode === 'pending') { chatKey = ''; return; }
+  if (env.mode === 'demo') { body.replaceChildren(h('p', { class: 'chat__msg', text: `示範模式不會載入 ${ch} 的聊天室。` })); return; }
+  body.replaceChildren(h('iframe', {
+    src: `https://www.twitch.tv/embed/${encodeURIComponent(ch)}/chat?${parentQuery()}${resolvedTheme() === 'dark' ? '&darkpopout' : ''}`,
+    title: `${ch} 的聊天室`
+  }));
+}
+function setChatWidth(w) {
+  state.chat.width = Math.round(clamp(w, 260, Math.min(560, window.innerWidth * 0.5)));
+  document.documentElement.style.setProperty('--chat-w', state.chat.width + 'px');
+}
+dividerEl.addEventListener('pointerdown', e => {
+  if (e.button !== 0) return;
+  safe(() => dividerEl.setPointerCapture(e.pointerId));
+  document.body.classList.add('is-resizing');
+  const move = ev => setChatWidth(window.innerWidth - ev.clientX - 3);
+  const up = () => {
+    document.body.classList.remove('is-resizing');
+    dividerEl.removeEventListener('pointermove', move);
+    dividerEl.removeEventListener('pointerup', up);
+    dividerEl.removeEventListener('pointercancel', up);
+    save();
+  };
+  dividerEl.addEventListener('pointermove', move);
+  dividerEl.addEventListener('pointerup', up);
+  dividerEl.addEventListener('pointercancel', up);
+});
+dividerEl.addEventListener('keydown', e => {
+  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+  e.preventDefault();
+  setChatWidth(state.chat.width + (e.key === 'ArrowLeft' ? 20 : -20));
+  save();
+});
+function toggleChat(force) {
+  state.chat.open = typeof force === 'boolean' ? force : !state.chat.open;
+  renderChat(); save();
+}
+
+/* ── 彈出面板 ─────────────────────────────────────────────── */
+let openPop = null;
+function showPop(name) {
+  if (openPop === name) return hidePop();
+  hidePop();
+  const pop = $('#pop-' + name), btn = $(`[data-pop="${name}"]`);
+  if (!pop) return;
+  if (name === 'groups') renderGroups();
+  if (name === 'points') renderPoints();
+  if (name === 'settings') renderSettings();
+  pop.hidden = false; $('#backdrop').hidden = false;
+  const barless = document.body.classList.contains('is-barless');
+  const r = btn && !barless ? btn.getBoundingClientRect() : null;
+  pop.style.top = (r ? r.bottom + 8 : 44) + 'px';
+  pop.style.right = (r ? Math.max(8, window.innerWidth - r.right) : 8) + 'px';
+  if (btn) btn.setAttribute('aria-expanded', 'true');
+  openPop = name;
+  const first = $('input, select, button, a[href]', pop);
+  if (first) safe(() => first.focus({ preventScroll: true }));
+}
+function hidePop() {
+  if (!openPop) return;
+  const btn = $(`[data-pop="${openPop}"]`);
+  $('#pop-' + openPop).hidden = true; $('#backdrop').hidden = true;
+  if (btn) { btn.setAttribute('aria-expanded', 'false'); if (!document.body.classList.contains('is-barless')) safe(() => btn.focus({ preventScroll: true })); }
+  openPop = null;
+}
+$('#backdrop').addEventListener('click', hidePop);
+$$('[data-pop]').forEach(b => b.addEventListener('click', () => showPop(b.dataset.pop)));
+
+/* 群組 */
+function renderGroups() {
+  $('#group-save').disabled = !state.channels.length;
+  const list = $('#group-list');
+  if (!state.presets.length) { list.replaceChildren(h('li', null, h('span', { class: 'grow' }, h('small', { text: '還沒有存過群組。' })))); return; }
+  list.replaceChildren(...state.presets.map((p, i) => h('li', null,
+    h('span', { class: 'grow' }, h('b', { text: p.name }), h('small', { text: `${p.channels.length} 台：${p.channels.join('、')}` })),
+    h('button', { class: 'btn btn--line', type: 'button', title: '用這個群組取代目前的牆', onclick: () => { applyChannelSet(p.channels.slice()); hidePop(); toast(`已載入「${p.name}」`); } }, '載入'),
+    h('button', { class: 'btn btn--line', type: 'button', title: '把這個群組加到目前的牆', onclick: () => { addChannels(p.channels); renderGroups(); } }, '加入'),
+    h('button', { class: 'tbtn', type: 'button', title: '刪除群組', 'aria-label': `刪除群組 ${p.name}`, onclick: () => { state.presets.splice(i, 1); save(); renderGroups(); renderEmptyGroups(); } }, icon('trash'))
+  )));
+}
+$('#group-form').addEventListener('submit', e => {
+  e.preventDefault();
+  if (!state.channels.length) return;
+  const input = $('#group-name');
+  const name = input.value.trim().slice(0, 24) || `群組 ${state.presets.length + 1}`;
+  const existing = state.presets.find(p => p.name === name);
+  if (existing) existing.channels = state.channels.slice();
+  else state.presets.push({ name, channels: state.channels.slice() });
+  input.value = '';
+  save(); renderGroups(); renderEmptyGroups();
+  toast(existing ? `已更新「${name}」` : `已儲存「${name}」`);
+});
+function renderEmptyGroups() {
+  const box = $('#empty-groups');
+  box.hidden = !state.presets.length;
+  if (!state.presets.length) return;
+  box.replaceChildren(h('span', { text: '載入存過的群組' }), ...state.presets.map(p =>
+    h('button', { class: 'btn btn--line', type: 'button', onclick: () => applyChannelSet(p.channels.slice()) }, p.name)));
+}
+$('#btn-share').addEventListener('click', async () => {
+  if (!state.channels.length) return toast('牆上還沒有頻道');
+  syncHash();
+  try { await navigator.clipboard.writeText(location.href); toast('已複製連結'); }
+  catch (e) { window.prompt('複製這個連結', location.href); }
+});
+
+/* 點數分頁 */
+const pointsUi = { dwell: 15, tabs: 2, lowq: true, picked: null };
+function renderPoints() {
+  const body = $('#points-body');
+  if (!state.channels.length) { body.replaceChildren(h('p', { text: '先在牆上加入頻道，再回來挑要輪播的台。' })); return; }
+  if (!pointsUi.picked) pointsUi.picked = new Set(state.channels);
+  const picked = state.channels.filter(c => pointsUi.picked.has(c));
+  const checks = h('div', { class: 'checks', role: 'group', 'aria-label': '要拿點數的頻道' }, ...state.channels.map(id => {
+    const box = h('input', { type: 'checkbox', checked: pointsUi.picked.has(id), onchange: () => { box.checked ? pointsUi.picked.add(id) : pointsUi.picked.delete(id); renderPoints(); } });
+    return h('label', { class: 'check' }, box, id);
+  }));
+  const dwell = h('select', { class: 'field', id: 'pt-dwell', onchange: e => { pointsUi.dwell = parseInt(e.target.value, 10); renderPoints(); } },
+    ...[10, 15, 20, 30, 60].map(m => h('option', { value: String(m), selected: m === pointsUi.dwell, text: `${m} 分鐘` })));
+  const tabsSel = h('select', { class: 'field', id: 'pt-tabs', onchange: e => { pointsUi.tabs = parseInt(e.target.value, 10); renderPoints(); } },
+    ...[1, 2].map(n => h('option', { value: String(n), selected: n === pointsUi.tabs, text: `${n} 個` })));
+  const lowq = h('button', { class: 'switch', type: 'button', role: 'switch', 'aria-checked': String(pointsUi.lowq), 'aria-labelledby': 'lbl-lowq',
+    onclick: () => { pointsUi.lowq = !pointsUi.lowq; renderPoints(); } });
+  const n = Math.min(pointsUi.tabs, Math.max(1, picked.length));
+  const groups = Array.from({ length: n }, (_, k) => picked.filter((_, i) => i % n === k));
+  const links = h('div', { class: 'tabs2' }, ...groups.filter(g => g.length).map((g, k) =>
+    h('a', { class: 'btn btn--solid', target: '_blank', rel: 'noopener',
+      href: `https://www.twitch.tv/${g[0]}#sw-points=${g.join(',')}&dwell=${pointsUi.dwell}&lowq=${pointsUi.lowq ? 1 : 0}` },
+      h('span', null, `開啟點數分頁${n > 1 ? ' ' + 'AB'[k] : ''}`, h('small', { text: g.join(' → ') })), icon('external'))));
+  body.replaceChildren(
+    checks,
+    h('div', { class: 'row' }, h('label', { for: 'pt-dwell', text: '每台停留' }), dwell),
+    h('div', { class: 'row' }, h('label', { for: 'pt-tabs' }, h('span', null, '點數分頁數量', h('small', { text: '2 個可以同時賺 2 台，1 個比較省記憶體' }))), tabsSel),
+    h('div', { class: 'row' }, h('span', { id: 'lbl-lowq' }, '點數分頁用最低畫質', h('small', { text: '只是掛著拿點數，不需要好畫質' })), lowq),
+    picked.length ? links : h('p', { text: '至少勾選一個頻道。' })
+  );
+}
+
+/* 設定 */
+function renderSettings() {
+  $$('#pop-settings [data-setting]').forEach(el => {
+    const key = el.dataset.setting, val = state.settings[key];
+    if (el.classList.contains('seg')) $$('.btn', el).forEach(b => b.setAttribute('aria-pressed', String(b.dataset.value === String(val))));
+    else if (el.tagName === 'SELECT') el.value = String(val);
+    else el.setAttribute('aria-checked', String(!!val));
+  });
+}
+function setSetting(key, val) {
+  state.settings[key] = val;
+  if (key === 'theme') applyTheme();
+  if (key === 'cols') relayout();
+  if (key === 'qMain' || key === 'qOthers') { tiles.forEach(t => { t.lastQ = null; }); applyQualityAll(); }
+  if (key === 'multiAudio' && !val) { const live = onAirIds(); live.slice(1).forEach(id => { const t = tiles.get(id); t.audio = false; pushMute(t); }); afterAudioChange(null); }
+  save(); renderSettings();
+}
+$('#pop-settings').addEventListener('click', e => {
+  const segBtn = e.target.closest('.seg[data-setting] .btn');
+  if (segBtn) { const key = segBtn.parentElement.dataset.setting; return setSetting(key, key === 'cols' ? parseInt(segBtn.dataset.value, 10) : segBtn.dataset.value); }
+  const sw = e.target.closest('.switch[data-setting]');
+  if (sw) setSetting(sw.dataset.setting, sw.getAttribute('aria-checked') !== 'true');
+});
+$('#pop-settings').addEventListener('change', e => { if (e.target.matches('select[data-setting]')) setSetting(e.target.dataset.setting, e.target.value); });
+let resetArmed = 0;
+$('#btn-reset').addEventListener('click', e => {
+  if (Date.now() - resetArmed > 4000) { resetArmed = Date.now(); e.currentTarget.textContent = '再按一次確認清除'; return; }
+  safe(() => localStorage.removeItem(STORE_KEY));
+  safe(() => history.replaceState(null, '', location.pathname + location.search));
+  location.reload();
+});
+
+/* ── 工具列 ───────────────────────────────────────────────── */
+function submitAdd(input) {
+  const { good, bad } = parseChannels(input.value);
+  if (good.length) { addChannels(good); input.value = ''; }
+  if (bad.length) toast(`「${bad.join('、')}」不是有效的頻道名稱`);
+  if (!good.length && !bad.length) input.focus();
+}
+$('#add-form').addEventListener('submit', e => { e.preventDefault(); submitAdd($('#add-input')); });
+$('#add-form-2').addEventListener('submit', e => { e.preventDefault(); submitAdd($('#add-input-2')); });
+$$('[data-layout]').forEach(b => b.addEventListener('click', () => setLayout(b.dataset.layout)));
+$('#btn-mute').addEventListener('click', toggleMuteAll);
+$('#btn-chat').addEventListener('click', () => toggleChat());
+$('#chat-close').addEventListener('click', () => toggleChat(false));
+const volEl = $('#vol');
+volEl.value = String(state.settings.volume);
+volEl.addEventListener('input', () => {
+  state.settings.volume = clamp(parseInt(volEl.value, 10) || 0, 0, 100);
+  tiles.forEach(t => { if (t.player && t.ready) safe(() => t.player.setVolume(state.settings.volume / 100)); });
+  save();
+});
+function toggleFullscreen() {
+  const d = document, el = d.documentElement;
+  const isFull = d.fullscreenElement || d.webkitFullscreenElement;
+  const p = isFull ? (d.exitFullscreen || d.webkitExitFullscreen || (() => {})).call(d)
+                   : (el.requestFullscreen || el.webkitRequestFullscreen || (() => {})).call(el);
+  if (p && p.catch) p.catch(() => toast('這個瀏覽器不允許全螢幕'));
+}
+$('#btn-full').addEventListener('click', toggleFullscreen);
+function setBarless(on) { hidePop(); document.body.classList.toggle('is-barless', on); relayout(); }
+$('#btn-hidebar').addEventListener('click', () => setBarless(true));
+$('#btn-showbar').addEventListener('click', () => setBarless(false));
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { if (openPop) hidePop(); else if (document.body.classList.contains('is-barless')) setBarless(false); return; }
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  const t = e.target;
+  if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+  const k = e.key.toLowerCase();
+  if (k === '/') { e.preventDefault(); setBarless(false); (state.channels.length ? $('#add-input') : $('#add-input-2')).focus(); }
+  else if (k === '?') showPop('help');
+  else if (k >= '1' && k <= '9') { const id = state.channels[parseInt(k, 10) - 1]; if (id) setAudio(id, !tiles.get(id).audio); }
+  else if (k === 'm') toggleMuteAll();
+  else if (k === 'g') setLayout(state.layout === 'grid' ? 'focus' : 'grid');
+  else if (k === 'c') toggleChat();
+  else if (k === 'h') setBarless(!document.body.classList.contains('is-barless'));
+  else if (k === 'f') toggleFullscreen();
+});
+
+/* ── 提示列 ───────────────────────────────────────────────── */
+function showNotice(text) { $('#notice-text').textContent = text; $('#notice').hidden = false; }
+$('#notice-close').addEventListener('click', () => { $('#notice').hidden = true; });
+let stallShown = false;
+function showStallNotice() {
+  if (stallShown) return; stallShown = true;
+  showNotice('Twitch 播放器沒有回應。請確認這個網站是用 https（或 localhost）開啟，並且沒有被擋廣告工具封鎖 player.twitch.tv。');
+}
+
+/* ── 啟動 ─────────────────────────────────────────────────── */
+function setMode(mode) {
+  if (env.mode === mode) return;
+  env.mode = mode;
+  tiles.forEach(mount);
+  afterAudioChange(null);
+  chatKey = ''; renderChat();
+  if (mode === 'iframe') toast('無法載入 Twitch 的控制程式，聲音請直接在各播放器上調整');
+}
+function boot() {
+  $$('[data-layout]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.layout === state.layout)));
+  const fromHash = parseChannels((hashParams().get('ch') || '').replace(/,/g, ' ')).good;
+  if (fromHash.length) state.channels = fromHash.slice(0, MAX_TILES);
+  const initial = state.channels.slice();
+  state.channels = [];
+  initial.forEach(id => { state.channels.push(id); createTile(id); });
+  applyTheme(); renderEmptyGroups(); relayout(); afterAudioChange(null); save();
+
+  window.addEventListener('hashchange', () => {
+    const list = parseChannels((hashParams().get('ch') || '').replace(/,/g, ' ')).good.slice(0, MAX_TILES);
+    if (list.join() !== state.channels.join()) applyChannelSet(list);
+  });
+  document.addEventListener('securitypolicyviolation', e => {
+    if (/twitch\.tv/.test(e.blockedURI || '') && /frame-src|child-src|default-src/.test(e.violatedDirective || '')) {
+      setMode('demo');
+      showNotice('這個頁面所在的環境不允許嵌入 Twitch，現在顯示的是示範畫面。把檔案放到自己的 https 網站（例如 GitHub Pages）就能正常播放。');
+    }
+  });
+
+  if (demoFlag) { setMode('demo'); return; }
+  if (!/^https?:$/.test(location.protocol) || !location.hostname) {
+    setMode('demo');
+    showNotice('直接開啟檔案時 Twitch 不允許嵌入，所以現在顯示的是示範畫面。把這個檔案放到 https 網站（例如 GitHub Pages）或用 localhost 開啟，就能播放實況。');
+    return;
+  }
+  const s = document.createElement('script');
+  s.src = 'https://player.twitch.tv/js/embed/v1.js';
+  s.async = true;
+  s.onload = () => setMode(window.Twitch && window.Twitch.Player ? 'api' : 'iframe');
+  s.onerror = () => setMode('iframe');
+  document.head.append(s);
+}
+boot();
+})();
+</script>
+</body>
+</html>
