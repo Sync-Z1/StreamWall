@@ -187,7 +187,8 @@ body.is-barless .barpill { display: inline-flex; }
 .lamp { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--line); }
 .tile.is-onair .lamp { background: var(--tally); box-shadow: 0 0 8px var(--tally); }
 .tile__name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 600; letter-spacing: .01em; }
-.tile__state { flex: none; color: var(--cue); font-size: 12px; white-space: nowrap; }
+.tile__state { flex: none; padding: 0 2px; background: none; border: 0; color: var(--cue); font: inherit; font-size: 12px; white-space: nowrap; cursor: pointer; }
+.tile__state:hover { text-decoration: underline; }
 .tile__state:empty { display: none; }
 .tile__id { flex: 1 1 0; min-width: 0; display: flex; align-items: center; gap: 6px; }
 .tile__actions { display: flex; flex: none; opacity: 0; transition: opacity .12s; }
@@ -400,6 +401,7 @@ input.field { min-width: 0; flex: 1; }
     <select class="field" id="set-qothers" data-setting="qOthers"><option value="auto">自動</option><option value="720">720p</option><option value="480">480p</option><option value="360">360p</option><option value="160">160p</option></select>
   </div>
   <div class="row"><span id="lbl-multi">允許多台同時出聲</span><button class="switch" type="button" role="switch" aria-checked="false" aria-labelledby="lbl-multi" data-setting="multiAudio"></button></div>
+  <div class="row"><span id="lbl-resume">畫面被暫停時自動恢復<small>切到別的分頁再回來，或停在廣告倒數時</small></span><button class="switch" type="button" role="switch" aria-checked="true" aria-labelledby="lbl-resume" data-setting="autoResume"></button></div>
   <div class="row"><span id="lbl-follow">聊天室跟著收聽中的頻道</span><button class="switch" type="button" role="switch" aria-checked="true" aria-labelledby="lbl-follow" data-setting="chatFollow"></button></div>
   <div class="pop__foot">
     <button class="btn btn--line btn--danger" type="button" id="btn-reset">清除所有資料</button>
@@ -420,10 +422,13 @@ input.field { min-width: 0; flex: 1; }
   </dl>
   <h3>排版</h3>
   <p>拖曳畫面下方的名牌可以交換位置；在名牌上連按兩下可以放大那一台。畫面太小時 Twitch 可能不會自動播放，點一下畫面就會開始。</p>
+  <h3>畫面卡在廣告？</h3>
+  <p>Twitch 會在這個分頁切到背景時，把靜音的畫面暫停，而且回來之後不會自己繼續；剛好停在廣告倒數，看起來就像卡住。實況牆會在你回到分頁時自動按播放。真的不肯動的那一台，會暫時改用 1% 音量讓廣告跑完再靜音回來，名牌上會顯示「處理廣告中」。名牌上出現「已暫停」時，按它就會繼續。</p>
+  <p>黃粉色的「Preparing your stream」和紫色的「Commercial break in progress」是 Twitch 自己換上的過場畫面，倒數結束就會回到實況。</p>
   <h3>聊天室無法登入？</h3>
   <p>嵌入的聊天室要用到跨站 Cookie。<strong>Chrome</strong> 預設可用；<strong>Brave</strong> 請在這個網站的 Shields 把 Cookie 改成「允許所有 Cookie」；<strong>Safari</strong> 要在「設定 › 隱私權」關閉「防止跨網站追蹤」。不想改設定的話，按名牌上的 ↗ 到 Twitch 本站聊天。</p>
   <h3>關於</h3>
-  <p>實況牆不是 Twitch 官方產品，播放器與聊天室由 Twitch 的官方嵌入功能提供。所有設定只存在這台電腦的瀏覽器裡。</p>
+  <p>實況牆不是 Twitch 官方產品，播放器與聊天室由 Twitch 的官方嵌入功能提供。所有設定只存在這台電腦的瀏覽器裡。版本 1.1。</p>
 </section>
 
 <div class="toasts" id="toasts" role="status" aria-live="polite"></div>
@@ -465,10 +470,10 @@ function icon(name) {
 const safe = fn => { try { return fn(); } catch (e) { return undefined; } };
 const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
 
-function toast(msg) {
+function toast(msg, ms = 2800) {
   const el = h('div', { class: 'toast', text: msg });
   $('#toasts').append(el);
-  setTimeout(() => el.remove(), 2800);
+  setTimeout(() => el.remove(), ms);
 }
 
 /* 把使用者輸入的文字拆成頻道名稱 */
@@ -491,7 +496,7 @@ const cleanList = list => Array.isArray(list)
   : [];
 
 /* ── 狀態 ─────────────────────────────────────────────────── */
-const DEFAULT_SETTINGS = { theme: 'system', cols: 0, qMain: 'auto', qOthers: '360', multiAudio: false, chatFollow: true, volume: 60 };
+const DEFAULT_SETTINGS = { theme: 'system', cols: 0, qMain: 'auto', qOthers: '360', multiAudio: false, chatFollow: true, autoResume: true, volume: 60 };
 const DEFAULT_CHAT = { open: false, width: 340, channel: null };
 
 function loadState() {
@@ -658,17 +663,20 @@ function doLayout() {
 new ResizeObserver(relayout).observe(wall);
 
 /* ── 畫面（tile） ─────────────────────────────────────────── */
-const STATUS_TEXT = { loading: '連線中', live: '', offline: '離線', blocked: '點畫面播放', stalled: '沒有回應', demo: '' };
+const STATUS_TEXT = { loading: '連線中', live: '', paused: '已暫停', rescue: '處理廣告中', offline: '離線', blocked: '點畫面播放', stalled: '沒有回應', demo: '' };
+const STATUS_HINT = { paused: '按一下繼續播放', offline: '按一下重新載入', stalled: '按一下重新載入', blocked: '按一下再試一次' };
 function setStatus(tile, status) {
   tile.status = status;
   tile.stateEl.textContent = STATUS_TEXT[status] || '';
+  tile.stateEl.title = STATUS_HINT[status] || '';
 }
 
 function createTile(id) {
-  const tile = { id, audio: false, player: null, ready: false, lastQ: null, guardUntil: 0, status: 'loading', box: null };
+  const tile = { id, audio: false, player: null, ready: false, lastQ: null, guardUntil: 0, status: 'loading', box: null,
+    everPlayed: false, readyAt: 0, userPaused: false, resumeTries: 0, lastResumeAt: 0, rescue: null, rescueStretch: 0, rescueFailed: false, remutedAt: 0 };
   tile.playerEl = h('div', { class: 'tile__player' });
   tile.keyEl = h('span', { class: 'tile__key', 'aria-hidden': 'true' });
-  tile.stateEl = h('span', { class: 'tile__state' });
+  tile.stateEl = h('button', { class: 'tile__state', type: 'button', onclick: () => nudge(tile) });
   tile.audioBtn = h('button', {
     class: 'tbtn tbtn--audio', type: 'button', 'aria-pressed': 'false', title: '收聽這台', 'aria-label': `收聽 ${id}`,
     onclick: () => setAudio(id, !tile.audio)
@@ -696,7 +704,7 @@ function createTile(id) {
   umd.addEventListener('pointermove', dragMove);
   umd.addEventListener('pointerup', e => dragEnd(e, true));
   umd.addEventListener('pointercancel', e => dragEnd(e, false));
-  umd.addEventListener('dblclick', e => { if (!e.target.closest('.tbtn')) setMain(id); });
+  umd.addEventListener('dblclick', e => { if (!e.target.closest('.tbtn, .tile__state')) setMain(id); });
   tile.el = h('article', { class: 'tile', 'aria-label': `${id} 的實況` },
     h('div', { class: 'tile__screen' }, tile.playerEl,
       h('div', { class: 'tile__bars', 'aria-hidden': 'true' }, h('span', { class: 'tile__barslabel', text: '示範畫面' }))),
@@ -709,6 +717,8 @@ function createTile(id) {
 
 function unmount(tile) {
   tile.player = null; tile.ready = false; tile.lastQ = null;
+  tile.everPlayed = false; tile.readyAt = 0; tile.userPaused = false; tile.resumeTries = 0; tile.lastResumeAt = 0;
+  tile.rescue = null; tile.rescueStretch = 0; tile.rescueFailed = false; tile.remutedAt = 0;
   clearTimeout(tile.stallTimer);
   tile.playerEl.replaceChildren();
 }
@@ -732,13 +742,14 @@ function mount(tile) {
     on(E.READY, () => {
       tile.ready = true;
       clearTimeout(tile.stallTimer);
-      safe(() => p.setVolume(state.settings.volume / 100));
-      safe(() => p.setMuted(!tile.audio));
-      guard(tile);
+      tile.readyAt = Date.now();
+      pushAudio(tile);
       if (tile.status === 'stalled') setStatus(tile, 'loading');
     });
-    on(E.PLAYING, () => { setStatus(tile, 'live'); queueQuality(tile); });
-    on(E.ONLINE, () => setStatus(tile, 'live'));
+    on(E.PLAYING, () => { tile.everPlayed = true; tile.userPaused = false; if (!tile.rescue) setStatus(tile, 'live'); queueQuality(tile); });
+    on(E.PLAY, () => { tile.userPaused = false; if (tile.status === 'paused') setStatus(tile, tile.everPlayed ? 'live' : 'loading'); });
+    on(E.PAUSE, () => { tile.userPaused = pausedByUser(tile); if (tile.userPaused && !tile.rescue) setStatus(tile, 'paused'); });
+    on(E.ONLINE, () => { if (tile.status === 'offline') setStatus(tile, 'loading'); });
     on(E.OFFLINE, () => setStatus(tile, 'offline'));
     on(E.ENDED, () => setStatus(tile, 'offline'));
     on(E.PLAYBACK_BLOCKED, () => setStatus(tile, 'blocked'));
@@ -793,21 +804,24 @@ function queueQuality(tile) {
 const applyQualityAll = () => tiles.forEach(t => { applyQuality(t); });
 
 /* ── 聲音：預設同時只收聽一台 ─────────────────────────────── */
+const onAirVolume = () => state.settings.volume / 100;
 const onAirIds = () => state.channels.filter(id => tiles.get(id) && tiles.get(id).audio);
 const guard = tile => { tile.guardUntil = Date.now() + 2500; };
-function pushMute(tile) {
+function pushAudio(tile) {
   guard(tile);
-  if (!tile.player || !tile.ready) return;
-  safe(() => tile.player.setMuted(!tile.audio));
-  if (tile.audio) safe(() => tile.player.setVolume(state.settings.volume / 100));
+  const p = tile.player;
+  if (!p || !tile.ready) return;
+  if (tile.audio) { safe(() => p.setVolume(onAirVolume())); safe(() => p.setMuted(false)); }
+  else safe(() => p.setMuted(true));
 }
 function setAudio(id, on) {
   const tile = tiles.get(id);
   if (!tile) return;
-  if (on && !state.settings.multiAudio) tiles.forEach(o => { if (o !== tile && o.audio) { o.audio = false; pushMute(o); } });
+  if (on && !state.settings.multiAudio) tiles.forEach(o => { if (o !== tile && o.audio) { o.audio = false; pushAudio(o); } });
+  tile.rescue = null;
   tile.audio = !!on;
-  pushMute(tile);
-  if (on) lastOnAir = id;
+  pushAudio(tile);
+  if (on) { lastOnAir = id; resumeNow(tile); }
   afterAudioChange(on ? id : null);
 }
 function afterAudioChange(newId) {
@@ -825,7 +839,7 @@ function afterAudioChange(newId) {
 }
 function toggleMuteAll() {
   const live = onAirIds();
-  if (live.length) { live.forEach(id => { const t = tiles.get(id); t.audio = false; pushMute(t); }); afterAudioChange(null); return; }
+  if (live.length) { live.forEach(id => { const t = tiles.get(id); t.audio = false; pushAudio(t); }); afterAudioChange(null); return; }
   const id = tiles.has(lastOnAir) ? lastOnAir : (state.layout === 'focus' && tiles.has(state.mainId) ? state.mainId : state.channels[0]);
   if (id) setAudio(id, true);
 }
@@ -835,17 +849,113 @@ setInterval(() => {
   const now = Date.now();
   let changed = null, any = false;
   tiles.forEach(t => {
-    if (!t.player || !t.ready || now < t.guardUntil) return;
-    const muted = safe(() => t.player.getMuted());
+    const p = t.player;
+    if (!p || !t.ready || t.rescue || now < t.guardUntil) return;
+    const muted = safe(() => p.getMuted());
     if (typeof muted !== 'boolean' || muted !== t.audio) return;
     t.audio = !muted; any = true;
-    if (t.audio) changed = t.id;
+    if (!t.audio) return;
+    changed = t.id;
+    const vol = safe(() => p.getVolume());       // 播放器記著的音量太小時，補回工具列上的音量
+    if (typeof vol === 'number' && vol < 0.05 && onAirVolume() >= 0.05) safe(() => p.setVolume(onAirVolume()));
   });
   if (!any) return;
-  if (changed && !state.settings.multiAudio) tiles.forEach(o => { if (o.id !== changed && o.audio) { o.audio = false; pushMute(o); } });
+  if (changed && !state.settings.multiAudio) tiles.forEach(o => { if (o.id !== changed && o.audio) { o.audio = false; pushAudio(o); } });
   if (changed) lastOnAir = changed;
   afterAudioChange(changed);
 }, 1500);
+
+/* ── 畫面被暫停時自動恢復 ─────────────────────────────────────
+ * Twitch 會在分頁切到背景時，把靜音播放的畫面暫停，而且回來之後不會自己繼續；
+ * 剛好停在廣告倒數時，看起來就像「卡在廣告」。
+ * 這裡每 2 秒巡一次：只要不是使用者自己按的暫停，分頁看得到時就幫忙按播放。
+ * 連按幾次都馬上又停（代表它不肯在靜音下播），才暫時改用 1% 音量讓它跑完，之後靜音回來。
+ */
+const RESCUE_VOL = 0.01, RESCUE_MAX = 0.02;      // Twitch 的音量只到小數兩位，再小會變成 0
+let frameFocus = { id: null, at: 0 };
+window.addEventListener('blur', () => setTimeout(() => {
+  const a = document.activeElement;
+  if (a && a.tagName === 'IFRAME') tiles.forEach(t => { if (t.playerEl.contains(a)) frameFocus = { id: t.id, at: Date.now() }; });
+}, 0));
+/* 游標正停在這一台上、或剛點進這一台的播放器，才當成是使用者自己按的暫停 */
+function pausedByUser(tile) {
+  if (document.visibilityState !== 'visible' || !document.hasFocus()) return false;
+  if (tile.el.matches(':hover')) return true;
+  return frameFocus.id === tile.id && Date.now() - frameFocus.at < 3000;
+}
+function resumeNow(tile) {
+  const p = tile.player;
+  if (!p || !tile.ready || safe(() => p.isPaused()) !== true) return;
+  tile.userPaused = false; tile.lastResumeAt = Date.now();
+  safe(() => p.play());
+}
+/* 名牌上的狀態文字可以按：離線或沒回應就重新載入，暫停就繼續播 */
+function nudge(tile) {
+  const p = tile.player;
+  if (!p || !tile.ready || tile.status === 'offline' || tile.status === 'stalled') { mount(tile); return; }
+  tile.userPaused = false; tile.resumeTries = 0; tile.rescueFailed = false; tile.lastResumeAt = Date.now();
+  safe(() => p.play());
+}
+function startRescue(t, p, now) {
+  t.rescueStretch = Math.min(t.rescueStretch ? t.rescueStretch * 2 : 30000, 180000);
+  const prev = safe(() => p.getVolume());
+  t.rescue = { phase: 'volume', until: now + t.rescueStretch, tries: 0, prevVol: typeof prev === 'number' && prev > RESCUE_MAX ? prev : Math.max(onAirVolume(), 0.3) };
+  t.resumeTries = 0; t.lastResumeAt = now; t.remutedAt = 0;
+  safe(() => p.setVolume(RESCUE_VOL));
+  setStatus(t, 'rescue');
+}
+function stepRescue(t, p, paused, now) {
+  const r = t.rescue;
+  if (!state.settings.autoResume && r.phase === 'on') r.until = 0;
+  if (r.phase === 'volume') {                    // 先確定音量真的降下來了才取消靜音，免得突然很大聲
+    const vol = safe(() => p.getVolume());
+    if (typeof vol === 'number' && vol > 0 && vol <= RESCUE_MAX) { r.phase = 'on'; t.lastResumeAt = now; safe(() => p.setMuted(false)); safe(() => p.play()); }
+    else if (++r.tries >= 4) { t.rescue = null; t.rescueFailed = true; setStatus(t, 'paused'); }
+    else safe(() => p.setVolume(RESCUE_VOL));
+    return;
+  }
+  if (r.phase === 'on') {
+    if (now >= r.until) { r.phase = 'restore'; r.tries = 0; safe(() => p.setMuted(true)); t.remutedAt = now; return; }
+    if (paused && now - t.lastResumeAt > 3000) { t.lastResumeAt = now; safe(() => p.play()); }
+    return;
+  }
+  /* restore：確定已經靜音後把音量調回去。Twitch 會記住音量，不調回來的話之後打開聲音會小到聽不見 */
+  if (safe(() => p.getMuted()) === true || ++r.tries >= 4) {
+    safe(() => p.setVolume(r.prevVol));
+    t.rescue = null; guard(t);
+    if (!paused) setStatus(t, 'live');
+  } else safe(() => p.setMuted(true));
+}
+function watchdog() {
+  if (env.mode !== 'api') return;
+  const now = Date.now();
+  const auto = state.settings.autoResume && document.visibilityState === 'visible';
+  tiles.forEach(t => {
+    const p = t.player;
+    if (!p || !t.ready || t.status === 'offline' || t.status === 'stalled' || typeof p.isPaused !== 'function') return;
+    const paused = safe(() => p.isPaused()) === true;
+    if (t.rescue) { stepRescue(t, p, paused, now); return; }
+    if (!paused) {
+      if (t.status === 'paused' || t.status === 'rescue') setStatus(t, t.everPlayed ? 'live' : 'loading');
+      if (t.resumeTries && now - t.lastResumeAt > 12000) t.resumeTries = 0;
+      if (t.remutedAt && now - t.remutedAt > 60000) { t.remutedAt = 0; t.rescueStretch = 0; }
+      /* 準備好了卻一直沒開始播（Twitch 在等畫面真的被看見）：看得到之後推一把 */
+      if (auto && !t.everPlayed && now - t.readyAt > 12000 && now - t.lastResumeAt > 10000) { t.lastResumeAt = now; safe(() => p.play()); }
+      return;
+    }
+    if (t.userPaused || !state.settings.autoResume) { if (t.status !== 'paused') setStatus(t, 'paused'); return; }
+    if (!auto) return;
+    if (t.resumeTries >= 3 && t.status !== 'paused') setStatus(t, 'paused');
+    if (now - t.lastResumeAt < (t.resumeTries > 6 ? 30000 : 3000)) return;
+    const adLikely = !t.audio && !t.rescueFailed && (t.resumeTries >= 3 || (t.remutedAt && now - t.remutedAt < 20000));
+    if (adLikely) { startRescue(t, p, now); return; }
+    t.resumeTries++; t.lastResumeAt = now;
+    safe(() => p.play());
+  });
+}
+setInterval(watchdog, 2000);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') setTimeout(watchdog, 400); });
+window.addEventListener('focus', () => setTimeout(watchdog, 400));
 
 /* ── 頻道的增刪與排序 ─────────────────────────────────────── */
 function addChannels(list, opts = {}) {
@@ -918,7 +1028,7 @@ function setMain(id) {
 /* ── 拖曳名牌交換位置 ─────────────────────────────────────── */
 let drag = null;
 function dragStart(e, tile) {
-  if (e.button !== 0 || e.target.closest('.tbtn')) return;
+  if (e.button !== 0 || e.target.closest('.tbtn, .tile__state')) return;
   drag = { id: tile.id, x: e.clientX, y: e.clientY, active: false, target: null, pid: e.pointerId, strip: e.currentTarget };
   safe(() => e.currentTarget.setPointerCapture(e.pointerId));
 }
@@ -1127,7 +1237,8 @@ function setSetting(key, val) {
   if (key === 'theme') applyTheme();
   if (key === 'cols') relayout();
   if (key === 'qMain' || key === 'qOthers') { tiles.forEach(t => { t.lastQ = null; }); applyQualityAll(); }
-  if (key === 'multiAudio' && !val) { const live = onAirIds(); live.slice(1).forEach(id => { const t = tiles.get(id); t.audio = false; pushMute(t); }); afterAudioChange(null); }
+  if (key === 'multiAudio' && !val) { const live = onAirIds(); live.slice(1).forEach(id => { const t = tiles.get(id); t.audio = false; pushAudio(t); }); afterAudioChange(null); }
+  if (key === 'autoResume') { tiles.forEach(t => { t.resumeTries = 0; t.rescueFailed = false; }); setTimeout(watchdog, 0); }
   save(); renderSettings();
 }
 $('#pop-settings').addEventListener('click', e => {
@@ -1162,7 +1273,7 @@ const volEl = $('#vol');
 volEl.value = String(state.settings.volume);
 volEl.addEventListener('input', () => {
   state.settings.volume = clamp(parseInt(volEl.value, 10) || 0, 0, 100);
-  tiles.forEach(t => { if (t.player && t.ready) safe(() => t.player.setVolume(state.settings.volume / 100)); });
+  tiles.forEach(t => { if (t.audio && t.player && t.ready) safe(() => t.player.setVolume(onAirVolume())); });
   save();
 });
 function toggleFullscreen() {
